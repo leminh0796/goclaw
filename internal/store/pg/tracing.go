@@ -338,6 +338,18 @@ func (s *PGTracingStore) BatchCreateSpans(ctx context.Context, spans []store.Spa
 	return firstErr
 }
 
+func (s *PGTracingStore) MarkStaleTraces(ctx context.Context) (int, error) {
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE traces SET status = 'stale', end_time = COALESCE(end_time, NOW()),
+			error = 'server restarted before trace completed'
+		WHERE status = 'running'`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
+
 func (s *PGTracingStore) BatchUpdateTraceAggregates(ctx context.Context, traceID uuid.UUID) error {
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE traces SET

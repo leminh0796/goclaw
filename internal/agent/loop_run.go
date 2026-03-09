@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -96,6 +97,18 @@ func (l *Loop) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 	// propagate topic/thread routing info back through announce messages.
 	if req.LocalKey != "" {
 		ctx = tools.WithToolLocalKey(ctx, req.LocalKey)
+	}
+
+	// Recover from panics so FinishTrace is always called.
+	// Re-panic after cleanup so the scheduler can handle it.
+	if !isChildTrace && l.traceCollector != nil && traceID != uuid.Nil {
+		defer func() {
+			if r := recover(); r != nil {
+				l.traceCollector.FinishTrace(context.Background(), traceID, store.TraceStatusError,
+					"panic: "+fmt.Sprint(r), "")
+				panic(r) // re-panic for scheduler cleanup
+			}
+		}()
 	}
 
 	runStart := time.Now().UTC()
