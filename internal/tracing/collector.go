@@ -98,7 +98,16 @@ func (c *Collector) SetExporter(exp SpanExporter) {
 }
 
 // Start begins the background flush loop.
+// Marks any running traces from a previous crash as stale (like cron's recomputeStaleJobs).
 func (c *Collector) Start() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if n, err := c.store.MarkStaleTraces(ctx); err != nil {
+		slog.Warn("tracing: failed to mark stale traces on startup", "error", err)
+	} else if n > 0 {
+		slog.Info("tracing: marked stale traces on startup", "count", n)
+	}
+
 	c.wg.Add(1)
 	go c.flushLoop()
 	slog.Info("tracing collector started")
@@ -108,6 +117,15 @@ func (c *Collector) Start() {
 func (c *Collector) Stop() {
 	close(c.stopCh)
 	c.wg.Wait()
+
+	// Final sweep: mark any traces still running as stale (safety net).
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if n, err := c.store.MarkStaleTraces(ctx); err != nil {
+		slog.Warn("tracing: failed to mark stale traces on shutdown", "error", err)
+	} else if n > 0 {
+		slog.Info("tracing: marked stale traces on shutdown", "count", n)
+	}
+	cancel()
 
 	// Shutdown external exporter (flushes remaining spans)
 	if c.exporter != nil {

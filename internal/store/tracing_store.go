@@ -14,6 +14,7 @@ const (
 	TraceStatusCompleted = "completed"
 	TraceStatusError     = "error"
 	TraceStatusCancelled = "cancelled"
+	TraceStatusStale     = "stale"
 )
 
 // Span type constants.
@@ -135,6 +136,10 @@ type TracingStore interface {
 	UpdateSpan(ctx context.Context, spanID uuid.UUID, updates map[string]any) error
 	GetTraceSpans(ctx context.Context, traceID uuid.UUID) ([]SpanData, error)
 	ListChildTraces(ctx context.Context, parentTraceID uuid.UUID) ([]TraceData, error)
+
+	// MarkStaleTraces transitions all running traces to stale status.
+	// Called on startup and shutdown to clean up traces orphaned by crashes.
+	MarkStaleTraces(ctx context.Context) (int, error)
 
 	// Batch operations (async flush)
 	BatchCreateSpans(ctx context.Context, spans []SpanData) error

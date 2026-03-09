@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -294,6 +295,32 @@ func (sq *SessionQueue) startOne(ctx context.Context) {
 
 // executeRun runs the agent and then starts the next queued message(s) if capacity allows.
 func (sq *SessionQueue) executeRun(ctx context.Context, runID string, runGeneration uint64, pending *PendingRequest) {
+	// Recover from panics to prevent Lane wg leak and unblock callers.
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("scheduler: panic in executeRun",
+				"session", sq.key, "run_id", runID, "panic", r)
+
+			// Send error to caller so they don't hang.
+			select {
+			case pending.ResultCh <- RunOutcome{Err: fmt.Errorf("panic: %v", r)}:
+			default:
+			}
+			close(pending.ResultCh)
+
+			// Clean up activeRuns tracking and schedule next.
+			sq.mu.Lock()
+			if entry, ok := sq.activeRuns[runID]; ok && entry.generation == sq.generation {
+				delete(sq.activeRuns, runID)
+				sq.removeFromOrder(runID)
+			}
+			if sq.hasCapacity() && len(sq.queue) > 0 {
+				sq.scheduleNext(sq.parentCtx)
+			}
+			sq.mu.Unlock()
+		}
+	}()
+
 	result, err := sq.runFn(ctx, pending.Req)
 	pending.ResultCh <- RunOutcome{Result: result, Err: err}
 	close(pending.ResultCh)
