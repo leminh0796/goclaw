@@ -270,7 +270,15 @@ func ResetCLISession(baseWorkDir, sessionKey string) {
 	}
 }
 
-// filterCLIEnv removes CLAUDE* env vars to prevent nested session conflicts.
+// nestedSessionVars are env vars that cause "nested Claude Code session" errors.
+// Only these are stripped — auth vars like CLAUDE_CODE_OAUTH_TOKEN must be preserved.
+var nestedSessionVars = map[string]bool{
+	"CLAUDECODE":             true,
+	"CLAUDE_CODE_ENTRYPOINT": true,
+}
+
+// filterCLIEnv removes env vars that cause nested session conflicts while
+// preserving auth vars (e.g. CLAUDE_CODE_OAUTH_TOKEN) needed by the CLI.
 func filterCLIEnv(environ []string) []string {
 	var filtered []string
 	for _, e := range environ {
@@ -278,8 +286,7 @@ func filterCLIEnv(environ []string) []string {
 		if before, _, ok := strings.Cut(e, "="); ok {
 			key = before
 		}
-		// Filter out variables that could cause nested CLI conflicts
-		if strings.HasPrefix(key, "CLAUDE") {
+		if nestedSessionVars[key] {
 			continue
 		}
 		filtered = append(filtered, e)

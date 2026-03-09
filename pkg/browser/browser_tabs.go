@@ -64,6 +64,10 @@ func (m *Manager) OpenTab(ctx context.Context, url string) (*TabInfo, error) {
 		return nil, fmt.Errorf("open tab: %w", err)
 	}
 
+	if _, err := page.EvalOnNewDocument(stealthJS); err != nil {
+		m.logger.Warn("stealth inject failed", "err", err)
+	}
+
 	if err := page.WaitStable(300 * time.Millisecond); err != nil {
 		return nil, fmt.Errorf("wait stable: %w", err)
 	}

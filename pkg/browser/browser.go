@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -9,6 +10,9 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 )
+
+//go:embed stealth.min.js
+var stealthJS string
 
 // Manager handles the Chrome browser lifecycle and page management.
 type Manager struct {
