@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/shared/empty-state";
 import { TableSkeleton } from "@/components/shared/loading-skeleton";
 import { ConfirmDialog } from "@/components/shared/confirm-dialog";
+import { useTranslation } from "react-i18next";
 import { useDeferredLoading } from "@/hooks/use-deferred-loading";
 import { useKnowledgeGraph, useKGStats, useKGGraph } from "./hooks/use-knowledge-graph";
 import { KGEntityDetailDialog } from "./kg-entity-detail-dialog";
@@ -21,6 +22,7 @@ interface KGEntitiesTabProps {
 type ViewMode = "table" | "graph";
 
 export function KGEntitiesTab({ agentId, userId }: KGEntitiesTabProps) {
+  const { t } = useTranslation("memory");
   const [searchQuery, setSearchQuery] = useState("");
   const [appliedQuery, setAppliedQuery] = useState("");
   const [viewEntity, setViewEntity] = useState<KGEntity | null>(null);
@@ -58,35 +60,36 @@ export function KGEntitiesTab({ agentId, userId }: KGEntitiesTabProps) {
     extractFromText(text, provider, model, userId);
 
   return (
-    <div>
-      {/* Stats bar */}
-      {stats && (
-        <div className="flex gap-4 text-xs text-muted-foreground mb-3">
-          <span>Entities: {stats.entity_count}</span>
-          <span>Relations: {stats.relation_count}</span>
-          {Object.entries(stats.entity_types).map(([type, count]) => (
-            <span key={type}>{type}: {count}</span>
-          ))}
-        </div>
-      )}
-
-      {/* Search + actions */}
-      <div className="flex gap-2 mb-4">
+    <div className="flex h-full flex-col">
+      {/* Search + stats + actions — single compact row */}
+      <div className="flex items-center gap-2 mb-3">
         <Input
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Search entities..."
-          className="max-w-sm"
+          placeholder={t("kg.search.placeholder")}
+          className="max-w-[220px] h-8 text-xs"
         />
-        <Button variant="outline" size="sm" onClick={handleSearch} disabled={fetching} className="gap-1 h-9">
-          <Search className="h-3.5 w-3.5" /> Search
+        <Button variant="outline" size="sm" onClick={handleSearch} disabled={fetching} className="gap-1 h-8 px-2.5">
+          <Search className="h-3.5 w-3.5" />
         </Button>
         {appliedQuery && (
-          <Button variant="ghost" size="sm" onClick={() => { setAppliedQuery(""); setSearchQuery(""); }} className="h-9">
-            Clear
+          <Button variant="ghost" size="sm" onClick={() => { setAppliedQuery(""); setSearchQuery(""); }} className="h-8 px-2 text-xs">
+            {t("kg.search.clear")}
           </Button>
         )}
+
+        {/* Inline stats */}
+        {stats && (
+          <div className="flex gap-2 text-[10px] text-muted-foreground ml-1">
+            <span>{t("kg.stats.entities", { count: stats.entity_count })}</span>
+            <span>{t("kg.stats.relations", { count: stats.relation_count })}</span>
+            {Object.entries(stats.entity_types).map(([type, count]) => (
+              <span key={type}>{type}: {count}</span>
+            ))}
+          </div>
+        )}
+
         <div className="flex-1" />
 
         {/* View mode toggle */}
@@ -95,7 +98,7 @@ export function KGEntitiesTab({ agentId, userId }: KGEntitiesTabProps) {
             variant={viewMode === "table" ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setViewMode("table")}
-            className="h-9 rounded-r-none gap-1 px-2.5"
+            className="h-8 rounded-r-none px-2"
           >
             <LayoutGrid className="h-3.5 w-3.5" />
           </Button>
@@ -103,21 +106,22 @@ export function KGEntitiesTab({ agentId, userId }: KGEntitiesTabProps) {
             variant={viewMode === "graph" ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setViewMode("graph")}
-            className="h-9 rounded-l-none gap-1 px-2.5"
+            className="h-8 rounded-l-none px-2"
           >
             <Share2 className="h-3.5 w-3.5" />
           </Button>
         </div>
 
-        <Button variant="outline" size="sm" onClick={() => refresh()} disabled={fetching} className="gap-1 h-9">
-          <RefreshCw className={"h-3.5 w-3.5" + (fetching ? " animate-spin" : "")} /> Refresh
+        <Button variant="outline" size="sm" onClick={() => refresh()} disabled={fetching} className="gap-1 h-8 px-2.5">
+          <RefreshCw className={"h-3.5 w-3.5" + (fetching ? " animate-spin" : "")} />
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setExtractOpen(true)} className="gap-1 h-9">
-          <Sparkles className="h-3.5 w-3.5" /> Extract
+        <Button variant="outline" size="sm" onClick={() => setExtractOpen(true)} className="gap-1 h-8 px-2.5">
+          <Sparkles className="h-3.5 w-3.5" /> {t("kg.extract")}
         </Button>
       </div>
 
       {/* Content area */}
+      <div className="min-h-0 flex-1">
       {viewMode === "graph" ? (
         <KGGraphView
           entities={graphData.entities}
@@ -129,19 +133,19 @@ export function KGEntitiesTab({ agentId, userId }: KGEntitiesTabProps) {
       ) : entities.length === 0 ? (
         <EmptyState
           icon={Network}
-          title="No entities"
-          description={appliedQuery ? "No entities match your search." : "No knowledge graph entities for this agent yet."}
+          title={t("kg.emptyTitle")}
+          description={appliedQuery ? t("kg.emptySearchDescription") : t("kg.emptyDescription")}
         />
       ) : (
-        <div className="rounded-md border">
-          <table className="w-full text-sm">
+        <div className="overflow-x-auto rounded-md border">
+          <table className="w-full min-w-[600px] text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="px-4 py-3 text-left font-medium">Name</th>
-                <th className="px-4 py-3 text-left font-medium">Type</th>
-                <th className="px-4 py-3 text-left font-medium">Description</th>
-                <th className="px-4 py-3 text-left font-medium">Confidence</th>
-                <th className="px-4 py-3 text-right font-medium">Actions</th>
+                <th className="px-4 py-3 text-left font-medium">{t("kg.columns.name")}</th>
+                <th className="px-4 py-3 text-left font-medium">{t("kg.columns.type")}</th>
+                <th className="px-4 py-3 text-left font-medium">{t("kg.columns.description")}</th>
+                <th className="px-4 py-3 text-left font-medium">{t("kg.columns.confidence")}</th>
+                <th className="px-4 py-3 text-right font-medium">{t("kg.columns.actions")}</th>
               </tr>
             </thead>
             <tbody>
@@ -186,6 +190,7 @@ export function KGEntitiesTab({ agentId, userId }: KGEntitiesTabProps) {
           </table>
         </div>
       )}
+      </div>
 
       {/* Entity detail dialog */}
       <KGEntityDetailDialog
@@ -207,9 +212,9 @@ export function KGEntitiesTab({ agentId, userId }: KGEntitiesTabProps) {
       <ConfirmDialog
         open={!!deleteTarget}
         onOpenChange={(open) => !open && setDeleteTarget(null)}
-        title="Delete Entity"
-        description={`Delete "${deleteTarget?.name}"? This will also delete all associated relations.`}
-        confirmLabel="Delete"
+        title={t("kg.deleteEntity.title")}
+        description={t("kg.deleteEntity.description", { name: deleteTarget?.name ?? "" })}
+        confirmLabel={t("kg.deleteEntity.confirmLabel")}
         variant="destructive"
         onConfirm={handleDelete}
         loading={deleteLoading}

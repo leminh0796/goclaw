@@ -120,7 +120,7 @@ func (l *Loop) buildMessages(ctx context.Context, history []providers.Message, s
 		HasSpawn:               l.tools != nil && hasSpawn,
 		HasSkillSearch:         hasSkillSearch,
 		HasMCPToolSearch:       hasMCPToolSearch,
-		HasKnowledgeGraph:     hasKG,
+		HasKnowledgeGraph:      hasKG,
 		MCPToolDescs:           mcpToolDescs,
 		ContextFiles:           contextFiles,
 		AgentType:              l.agentType,
@@ -151,7 +151,18 @@ func (l *Loop) buildMessages(ctx context.Context, history []providers.Message, s
 	// History pipeline matching TS: limitHistoryTurns → pruneContext → sanitizeHistory.
 	trimmed := limitHistoryTurns(history, historyLimit)
 	pruned := pruneContextMessages(trimmed, l.contextWindow, l.contextPruningCfg)
-	messages = append(messages, sanitizeHistory(pruned)...)
+	sanitized, droppedCount := sanitizeHistory(pruned)
+	messages = append(messages, sanitized...)
+
+	// If orphaned messages were found and dropped, persist the cleaned history
+	// back to the session store so the same orphans don't trigger on every request.
+	if droppedCount > 0 {
+		slog.Info("sanitizeHistory: cleaned session history",
+			"session", sessionKey, "dropped", droppedCount)
+		cleanedHistory, _ := sanitizeHistory(history)
+		l.sessions.SetHistory(sessionKey, cleanedHistory)
+		l.sessions.Save(sessionKey)
+	}
 
 	// Current user message
 	messages = append(messages, providers.Message{
@@ -196,8 +207,8 @@ func (l *Loop) resolveContextFiles(ctx context.Context, userID string) []bootstr
 // these limits, inline all skills as XML in the system prompt (like TS).
 // Above these limits, only include skill_search instructions.
 const (
-	skillInlineMaxCount  = 20   // max skills to inline
-	skillInlineMaxTokens = 3500 // max estimated tokens for skill descriptions
+	skillInlineMaxCount  = 40   // max skills to inline
+	skillInlineMaxTokens = 5000 // max estimated tokens for skill descriptions
 )
 
 // resolveSkillsSummary dynamically builds the skills summary for the system prompt.
@@ -270,21 +281,26 @@ func limitHistoryTurns(msgs []providers.Message, limit int) []providers.Message 
 //   - Orphaned tool messages at start of history (after truncation)
 //   - tool_result without matching tool_use in preceding assistant message
 //   - assistant with tool_calls but missing tool_results
-func sanitizeHistory(msgs []providers.Message) []providers.Message {
+// sanitizeHistory repairs tool_use/tool_result pairing in session history.
+// Returns the cleaned messages and the number of messages that were dropped or synthesized.
+func sanitizeHistory(msgs []providers.Message) ([]providers.Message, int) {
 	if len(msgs) == 0 {
-		return msgs
+		return msgs, 0
 	}
+
+	dropped := 0
 
 	// 1. Skip leading orphaned tool messages (no preceding assistant with tool_calls).
 	start := 0
 	for start < len(msgs) && msgs[start].Role == "tool" {
-		slog.Warn("dropping orphaned tool message at history start",
+		slog.Debug("sanitizeHistory: dropping orphaned tool message at history start",
 			"tool_call_id", msgs[start].ToolCallID)
+		dropped++
 		start++
 	}
 
 	if start >= len(msgs) {
-		return nil
+		return nil, dropped
 	}
 
 	// 2. Walk through messages ensuring tool_result follows matching tool_use.
@@ -309,30 +325,33 @@ func sanitizeHistory(msgs []providers.Message) []providers.Message {
 					result = append(result, toolMsg)
 					delete(expectedIDs, toolMsg.ToolCallID)
 				} else {
-					slog.Warn("dropping mismatched tool result",
+					slog.Debug("sanitizeHistory: dropping mismatched tool result",
 						"tool_call_id", toolMsg.ToolCallID)
+					dropped++
 				}
 			}
 
 			// Synthesize missing tool results
 			for id := range expectedIDs {
-				slog.Warn("synthesizing missing tool result", "tool_call_id", id)
+				slog.Debug("sanitizeHistory: synthesizing missing tool result", "tool_call_id", id)
 				result = append(result, providers.Message{
 					Role:       "tool",
 					Content:    "[Tool result missing — session was compacted]",
 					ToolCallID: id,
 				})
+				dropped++
 			}
 		} else if msg.Role == "tool" {
 			// Orphaned tool message mid-history (no preceding assistant with matching tool_calls)
-			slog.Warn("dropping orphaned tool message mid-history",
+			slog.Debug("sanitizeHistory: dropping orphaned tool message mid-history",
 				"tool_call_id", msg.ToolCallID)
+			dropped++
 		} else {
 			result = append(result, msg)
 		}
 	}
 
-	return result
+	return result, dropped
 }
 
 func (l *Loop) maybeSummarize(ctx context.Context, sessionKey string) {
@@ -397,46 +416,47 @@ func (l *Loop) maybeSummarize(ctx context.Context, sessionKey string) {
 		summary := l.sessions.GetSummary(sessionKey)
 		toSummarize := history[:len(history)-keepLast]
 
-		var sb string
+		var sb strings.Builder
 		var mediaKinds []string
 		for _, m := range toSummarize {
 			if m.Role == "user" {
-				sb += fmt.Sprintf("user: %s\n", m.Content)
+				sb.WriteString(fmt.Sprintf("user: %s\n", m.Content))
 			} else if m.Role == "assistant" {
-				sb += fmt.Sprintf("assistant: %s\n", SanitizeAssistantContent(m.Content))
+				sb.WriteString(fmt.Sprintf("assistant: %s\n", SanitizeAssistantContent(m.Content)))
 			}
 			for _, ref := range m.MediaRefs {
 				mediaKinds = append(mediaKinds, ref.Kind)
 			}
 		}
 
-		prompt := "Provide a concise summary of this conversation, preserving key context:\n"
+		var prompt strings.Builder
+		prompt.WriteString("Provide a concise summary of this conversation, preserving key context:\n")
 		if len(mediaKinds) > 0 {
 			// Deduplicate and count media types for a compact note.
 			counts := make(map[string]int)
 			for _, k := range mediaKinds {
 				counts[k]++
 			}
-			prompt += "\nNote: user shared media files ("
+			prompt.WriteString("\nNote: user shared media files (")
 			first := true
 			for k, n := range counts {
 				if !first {
-					prompt += ", "
+					prompt.WriteString(", ")
 				}
-				prompt += fmt.Sprintf("%d %s(s)", n, k)
+				prompt.WriteString(fmt.Sprintf("%d %s(s)", n, k))
 				first = false
 			}
-			prompt += ") which are no longer in context. Mention briefly if relevant.\n"
+			prompt.WriteString(") which are no longer in context. Mention briefly if relevant.\n")
 		}
 		if summary != "" {
-			prompt += "Existing context: " + summary + "\n"
+			prompt.WriteString("Existing context: " + summary + "\n")
 		}
-		prompt += "\n" + sb
+		prompt.WriteString("\n" + sb.String())
 
 		resp, err := l.provider.Chat(sctx, providers.ChatRequest{
-			Messages: []providers.Message{{Role: "user", Content: prompt}},
+			Messages: []providers.Message{{Role: "user", Content: prompt.String()}},
 			Model:    l.model,
-			Options:  map[string]interface{}{"max_tokens": 1024, "temperature": 0.3},
+			Options:  map[string]any{"max_tokens": 1024, "temperature": 0.3},
 		})
 		if err != nil {
 			slog.Warn("summarization failed", "session", sessionKey, "error", err)
@@ -456,6 +476,17 @@ func (l *Loop) buildGroupWriterPrompt(ctx context.Context, groupID, senderID str
 	writers, err := l.groupWriterCache.ListWriters(ctx, l.agentUUID, groupID)
 	if err != nil || len(writers) == 0 {
 		return "", files // fail-open
+	}
+
+	// System-initiated runs (cron, delegate, subagent) have no sender ID.
+	// Allow reading, messaging, and tool use freely, but still protect
+	// identity files (SOUL.md, IDENTITY.md, etc.) from modification.
+	if senderID == "" {
+		var sb strings.Builder
+		sb.WriteString("## Group File Permissions\n\n")
+		sb.WriteString("This is a system-initiated run (cron/scheduled task). You may read files, send messages, and use tools freely.\n")
+		sb.WriteString("However, do NOT modify protected identity files (SOUL.md, IDENTITY.md, AGENTS.md, USER.md) unless explicitly instructed by the task.\n")
+		return sb.String(), files
 	}
 
 	numericID := strings.SplitN(senderID, "|", 2)[0]

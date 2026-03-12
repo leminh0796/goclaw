@@ -1,18 +1,23 @@
-import { Moon, Sun, PanelLeftClose, PanelLeftOpen, Menu, LogOut, Bell } from "lucide-react";
+import { Moon, Sun, PanelLeftClose, PanelLeftOpen, Menu, LogOut, Bell, Globe, Clock } from "lucide-react";
 import { useNavigate } from "react-router";
+import { useTranslation } from "react-i18next";
 import { useUiStore } from "@/stores/use-ui-store";
 import { useAuthStore } from "@/stores/use-auth-store";
 import { useIsMobile } from "@/hooks/use-media-query";
 import { usePendingPairingsCount } from "@/hooks/use-pending-pairings-count";
-import { ROUTES } from "@/lib/constants";
+import { ROUTES, SUPPORTED_LANGUAGES, LANGUAGE_LABELS, TIMEZONE_OPTIONS, type Language } from "@/lib/constants";
 
 export function Topbar() {
+  const { t } = useTranslation("topbar");
   const theme = useUiStore((s) => s.theme);
   const setTheme = useUiStore((s) => s.setTheme);
+  const language = useUiStore((s) => s.language);
+  const setLanguage = useUiStore((s) => s.setLanguage);
+  const timezone = useUiStore((s) => s.timezone);
+  const setTimezone = useUiStore((s) => s.setTimezone);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const setMobileSidebarOpen = useUiStore((s) => s.setMobileSidebarOpen);
-  const userId = useAuthStore((s) => s.userId);
   const logout = useAuthStore((s) => s.logout);
   const isMobile = useIsMobile();
   const navigate = useNavigate();
@@ -24,13 +29,17 @@ export function Topbar() {
     ? () => setMobileSidebarOpen(true)
     : toggleSidebar;
 
+  const handleLanguageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setLanguage(e.target.value as Language);
+  };
+
   return (
-    <header className="flex h-14 items-center justify-between border-b bg-background px-4">
+    <header className="flex h-14 items-center justify-between border-b bg-background px-4 landscape-compact">
       <div className="flex items-center gap-2">
         <button
           onClick={handleSidebarToggle}
           className="cursor-pointer rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-          title={isMobile ? "Open menu" : sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={isMobile ? t("openMenu") : sidebarCollapsed ? t("expandSidebar") : t("collapseSidebar")}
         >
           {isMobile ? (
             <Menu className="h-4 w-4" />
@@ -43,14 +52,10 @@ export function Topbar() {
       </div>
 
       <div className="flex items-center gap-2">
-        {userId && !isMobile && (
-          <span className="text-xs text-muted-foreground">{userId}</span>
-        )}
-
         <button
           onClick={() => navigate(ROUTES.NODES)}
           className="relative cursor-pointer rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-          title={pendingCount > 0 ? `${pendingCount} pending pairing request${pendingCount > 1 ? "s" : ""}` : "Pairing requests"}
+          title={pendingCount > 0 ? t("pendingPairing", { count: pendingCount }) : t("pairingRequests")}
         >
           <Bell className="h-4 w-4" />
           {pendingCount > 0 && (
@@ -58,10 +63,36 @@ export function Topbar() {
           )}
         </button>
 
+        <div className="flex items-center gap-1 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground" title={t("language")}>
+          <Globe className="h-4 w-4 shrink-0" />
+          <select
+            value={language}
+            onChange={handleLanguageChange}
+            className="cursor-pointer bg-transparent text-xs outline-none"
+          >
+            {SUPPORTED_LANGUAGES.map((lang) => (
+              <option key={lang} value={lang}>{LANGUAGE_LABELS[lang]}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex items-center gap-1 rounded-md px-2 py-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground" title={t("timezone")}>
+          <Clock className="h-4 w-4 shrink-0" />
+          <select
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+            className="cursor-pointer bg-transparent text-xs outline-none"
+          >
+            {TIMEZONE_OPTIONS.map((tz) => (
+              <option key={tz.value} value={tz.value}>{tz.label}</option>
+            ))}
+          </select>
+        </div>
+
         <button
           onClick={() => setTheme(isDark ? "light" : "dark")}
           className="cursor-pointer rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-          title="Toggle theme"
+          title={t("toggleTheme")}
         >
           {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </button>
@@ -69,7 +100,7 @@ export function Topbar() {
         <button
           onClick={logout}
           className="cursor-pointer rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-          title="Logout"
+          title={t("logout")}
         >
           <LogOut className="h-4 w-4" />
         </button>
