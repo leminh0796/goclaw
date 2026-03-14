@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -902,6 +903,9 @@ func runGateway() {
 		// Broadcast shutdown event
 		server.BroadcastEvent(*protocol.NewEvent(protocol.EventShutdown, nil))
 
+		// Stop accepting new work first — reject new inbound messages and schedule calls.
+		sched.MarkDraining()
+
 		// Stop channels, cron, heartbeat, and task ticker
 		channelMgr.StopAll(context.Background())
 		pgStores.Cron.Stop()
@@ -913,6 +917,20 @@ func runGateway() {
 		// Drain audit log queue before closing DB
 		if auditCh != nil {
 			close(auditCh)
+		}
+
+		// Wait for in-flight agent runs to finish (up to 30s).
+		// This prevents traces from being marked stale on every restart.
+		drainDone := make(chan struct{})
+		go func() {
+			sched.Lanes().WaitAll()
+			close(drainDone)
+		}()
+		select {
+		case <-drainDone:
+			slog.Info("graceful shutdown: all agent runs completed")
+		case <-time.After(30 * time.Second):
+			slog.Warn("graceful shutdown: timed out waiting for agent runs, forcing shutdown")
 		}
 
 		// Close provider resources (e.g. Claude CLI temp files)
