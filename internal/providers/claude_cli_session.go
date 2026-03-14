@@ -241,15 +241,39 @@ func buildStreamJSONInput(text string, images []ImageContent) *bytes.Reader {
 	return bytes.NewReader(data)
 }
 
-// nestedSessionVars are env vars that cause "nested Claude Code session" errors.
-// Only these are stripped — auth vars like CLAUDE_CODE_OAUTH_TOKEN must be preserved.
-var nestedSessionVars = map[string]bool{
-	"CLAUDECODE":              true,
-	"CLAUDE_CODE_ENTRYPOINT":  true,
+// ResetCLISession deletes the Claude CLI session file and CLAUDE.md for a given session key.
+// Called on /reset to ensure the CLI starts fresh instead of --resume-ing poisoned history.
+// Safe to call even if CLI provider is not in use (no-op if files don't exist).
+func ResetCLISession(baseWorkDir, sessionKey string) {
+	if baseWorkDir == "" {
+		baseWorkDir = defaultCLIWorkDir()
+	}
+	safe := sanitizePathSegment(sessionKey)
+	workDir := filepath.Join(baseWorkDir, safe)
+	sessionID := deriveSessionUUID(sessionKey)
+
+	// Delete CLI session .jsonl file from ~/.claude/projects/
+	home, err := os.UserHomeDir()
+	if err == nil {
+		resolved, err := filepath.EvalSymlinks(workDir)
+		if err != nil {
+			resolved = workDir
+		}
+		encoded := strings.NewReplacer(string(filepath.Separator), "-", "_", "-", ".", "-", ":", "-").Replace(resolved)
+		sessionFile := filepath.Join(home, ".claude", "projects", encoded, sessionID.String()+".jsonl")
+		if err := os.Remove(sessionFile); err == nil {
+			slog.Info("claude-cli: deleted session file on /reset", "path", sessionFile)
+		}
+	}
+
+	// Delete CLAUDE.md from workdir so it regenerates fresh
+	claudeMD := filepath.Join(workDir, "CLAUDE.md")
+	if err := os.Remove(claudeMD); err == nil {
+		slog.Info("claude-cli: deleted CLAUDE.md on /reset", "path", claudeMD)
+	}
 }
 
-// filterCLIEnv removes env vars that cause nested session conflicts while
-// preserving auth vars (e.g. CLAUDE_CODE_OAUTH_TOKEN) needed by the CLI.
+// filterCLIEnv removes CLAUDE* env vars to prevent nested session conflicts.
 func filterCLIEnv(environ []string) []string {
 	var filtered []string
 	for _, e := range environ {
@@ -257,7 +281,8 @@ func filterCLIEnv(environ []string) []string {
 		if before, _, ok := strings.Cut(e, "="); ok {
 			key = before
 		}
-		if nestedSessionVars[key] {
+		// Filter out variables that could cause nested CLI conflicts
+		if strings.HasPrefix(key, "CLAUDE") {
 			continue
 		}
 		filtered = append(filtered, e)
