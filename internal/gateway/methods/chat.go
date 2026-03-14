@@ -3,6 +3,7 @@ package methods
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 
 	"github.com/google/uuid"
 
@@ -152,6 +153,12 @@ func (m *ChatMethods) handleSend(ctx context.Context, client *gateway.Client, re
 	go func() {
 		defer m.agents.UnregisterRun(runID)
 		defer cancel()
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in chat.send handler", "runID", runID, "panic", r)
+				client.SendResponse(protocol.NewErrorResponse(req.ID, protocol.ErrInternal, "internal error"))
+			}
+		}()
 
 		// Parse media items (supports both legacy string paths and new {path,filename} objects).
 		items := params.parseMedia()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,6 +23,7 @@ type Client struct {
 	role          permissions.Role
 	userID        string // external user ID (TEXT, free-form), set during connect
 	send          chan []byte
+	closeOnce     sync.Once // ensures conn.Close() is called exactly once
 
 	connectedAt time.Time // when the client connected
 	remoteAddr  string    // peer IP (extracted from proxy headers or RemoteAddr)
@@ -58,7 +60,7 @@ const maxWSMessageSize = 512 * 1024
 
 // readPump reads frames from the WebSocket connection.
 func (c *Client) readPump(ctx context.Context) {
-	defer c.conn.Close()
+	defer c.closeConn()
 
 	c.conn.SetReadLimit(maxWSMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
@@ -88,7 +90,7 @@ func (c *Client) writePump() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer func() {
 		ticker.Stop()
-		c.conn.Close()
+		c.closeConn()
 	}()
 
 	for {
@@ -190,6 +192,13 @@ func (c *Client) ConnectedAt() time.Time { return c.connectedAt }
 
 // RemoteAddr returns the peer IP:port.
 func (c *Client) RemoteAddr() string { return c.remoteAddr }
+
+// closeConn closes the underlying WebSocket connection exactly once.
+func (c *Client) closeConn() {
+	c.closeOnce.Do(func() {
+		c.conn.Close()
+	})
+}
 
 // Close shuts down the client connection.
 func (c *Client) Close() {

@@ -216,6 +216,24 @@ func (lm *LaneManager) StopAll() {
 	}
 }
 
+// WaitAll waits for all active work across all lanes to complete
+// without cancelling lane contexts. Used during graceful shutdown
+// to let in-flight runs finish before killing the context.
+func (lm *LaneManager) WaitAll() {
+	lm.mu.RLock()
+	defer lm.mu.RUnlock()
+
+	var wg sync.WaitGroup
+	for _, lane := range lm.lanes {
+		wg.Add(1)
+		go func(l *Lane) {
+			defer wg.Done()
+			l.wg.Wait()
+		}(lane)
+	}
+	wg.Wait()
+}
+
 // AllStats returns utilization for all lanes.
 func (lm *LaneManager) AllStats() []LaneStats {
 	lm.mu.RLock()

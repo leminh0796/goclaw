@@ -212,6 +212,7 @@ export class WsClient {
       // Server accepted connection but assigned viewer role → token is invalid
       if (this.getToken() && res?.role === "viewer") {
         this.intentionalClose = true;
+        this.authenticated = false;
         this.ws?.close();
         this.onAuthFailure?.();
         return;

@@ -70,7 +70,7 @@ func (l *Loop) compactMessagesInPlace(ctx context.Context, messages []providers.
 	})
 	if err != nil {
 		slog.Warn("mid_loop_compaction_failed", "agent", l.id, "error", err)
-		return nil
+		return messages // return original messages instead of nil to avoid context overflow
 	}
 
 	summary := providers.Message{

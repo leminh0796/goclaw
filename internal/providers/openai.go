@@ -125,6 +125,18 @@ func (p *OpenAIProvider) ChatStream(ctx context.Context, req ChatRequest, onChun
 			break
 		}
 
+		// Detect error objects in the stream (OpenRouter sends these for
+		// provider routing failures, model overloaded, content filter, etc.)
+		var streamErr struct {
+			Error *struct {
+				Message string `json:"message"`
+				Code    any    `json:"code"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(data), &streamErr) == nil && streamErr.Error != nil {
+			return nil, fmt.Errorf("%s: stream error: %s", p.name, streamErr.Error.Message)
+		}
+
 		var chunk openAIStreamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
@@ -363,6 +375,15 @@ func (p *OpenAIProvider) doRequest(ctx context.Context, body any) (io.ReadCloser
 			Body:       fmt.Sprintf("%s: %s", p.name, string(respBody)),
 			RetryAfter: retryAfter,
 		}
+	}
+
+	// Reject non-JSON/SSE responses (e.g. HTML error pages from OpenRouter
+	// infrastructure failures that return 200 OK with text/html).
+	ct := resp.Header.Get("Content-Type")
+	if ct != "" && !strings.Contains(ct, "json") && !strings.Contains(ct, "text/event-stream") && !strings.Contains(ct, "text/plain") {
+		respBody, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return nil, fmt.Errorf("%s: unexpected Content-Type %q (body: %.200s)", p.name, ct, string(respBody))
 	}
 
 	return resp.Body, nil
